@@ -124,19 +124,29 @@ class Anchor:
         if not hb.pid:
             hb.pid = os.getpid()
         path = self.root / f"{hb.animal}{HB_SUFFIX}"
-        path.write_text(
-            json.dumps(_to_json(hb), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        # Atomic write: temp file + rename to avoid partial reads
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=self.root, suffix=HB_SUFFIX + ".tmp")
+        try:
+            with os.fdopen(tmp_fd, 'w', encoding="utf-8") as f:
+                f.write(json.dumps(_to_json(hb), indent=2, ensure_ascii=False))
+            os.replace(tmp_path, path)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
         return path
 
     def reap(self, animal: str) -> bool:
-        """Remove a heartbeat (the animal is gone)."""
+        """Remove a heartbeat (the animal is gone).
+
+        Uses try/except instead of exists+unlink to avoid TOCTOU race.
+        """
         path = self.root / f"{animal}{HB_SUFFIX}"
-        if path.exists():
+        try:
             path.unlink()
             return True
-        return False
+        except FileNotFoundError:
+            return False
 
     # ----- Roster ------------------------------------------------------
 
